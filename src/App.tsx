@@ -205,17 +205,7 @@ function App() {
     }
   };
 
-  const refreshPaymentStatus = async (theUid = uid) => {
-    try {
-      const res = await fetch(`${API_BASE}/api/status?uid=${encodeURIComponent(theUid)}`);
-      if (!res.ok) throw new Error("Estado no disponible");
-      const data = await res.json();
-      setIsPaid(!!data.paid);
-    } catch (e) {
-      console.error(e);
-      setIsPaid(false);
-    }
-  };
+
 
   const startCheckout = async () => {
     try {
