@@ -67,7 +67,7 @@ function App() {
 
   // ------ Pago / Stripe ------
   const API_BASE = process.env.NODE_ENV === 'production' 
-    ? '/api' 
+    ? 'https://voice-cv.com/api' 
     : 'http://localhost:4242';
   const [uid, setUid] = useState<string>("");
   const [isPaid, setIsPaid] = useState<boolean>(false);

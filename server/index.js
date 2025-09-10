@@ -15,6 +15,7 @@ const app = express();
 // --------- Config ---------
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 const PORT = process.env.PORT || 4242;
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: "2024-06-20",
