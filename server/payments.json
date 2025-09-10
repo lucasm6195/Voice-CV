@@ -1,0 +1,38 @@
+{
+  "6345750e-b104-40f6-b9c5-63028eba4114": {
+    "paid": true,
+    "sessionId": "cs_test_a1z319hBRbARcDlBhCrKBbwmZudoRNUacSZFgzdI4202xbVfyZaAz9xaFA",
+    "customerId": null,
+    "when": "2025-09-10T16:20:04.965Z"
+  },
+  "47216b25-4b94-427f-8c60-401975f37988": {
+    "paid": true,
+    "sessionId": "cs_test_a1Tlquk0IVVes6QE009JtbIcc2s7957J2FcvCHACsUYkqVVfT4VyNzYhNu",
+    "customerId": null,
+    "when": "2025-09-10T16:27:29.478Z"
+  },
+  "b12a3027-1eab-4a84-a9e7-17aab2829aea": {
+    "paid": true,
+    "sessionId": "cs_test_a1PTF6s1ruahbqMpL85fuBYhKs4XRglQ7WmQIouBLBPNNJNLI3vultsBrs",
+    "customerId": null,
+    "when": "2025-09-10T16:30:43.186Z",
+    "used": true,
+    "usedAt": "2025-09-10T16:31:30.265Z"
+  },
+  "7146bc09-22ca-4fab-9e38-d3e2a4402b8d": {
+    "paid": true,
+    "sessionId": "cs_test_a1UXqv1h4WDQTyYSeWMpCPbyk4gMmHPYfjD8GS69CsQRtqqtwwoi8AmYTZ",
+    "customerId": null,
+    "when": "2025-09-10T16:33:01.308Z",
+    "used": true,
+    "usedAt": "2025-09-10T16:33:30.945Z"
+  },
+  "abcd1095-9e12-4b41-84bf-b2e100ac2602": {
+    "paid": true,
+    "sessionId": "cs_test_a1pbjd7CyeggaHrUrXrcvZrxMYgDmpQVh2nNULSn9X0LlkakGv1MMG89lq",
+    "customerId": null,
+    "when": "2025-09-10T16:48:55.171Z",
+    "used": true,
+    "usedAt": "2025-09-10T16:50:24.374Z"
+  }
+}

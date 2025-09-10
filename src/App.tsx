@@ -16,6 +16,9 @@ import {
   Clock3,
   CheckCircle2,
   Info,
+  CreditCard,
+  Lock,
+  User,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Toaster } from "@/components/ui/toaster";
@@ -31,6 +34,7 @@ interface CVData {
     phone: string;
     address: string;
     linkedin: string;
+    profileImage?: string; // Nueva propiedad opcional
   };
   summary: string;
   experience: Array<{
@@ -50,14 +54,32 @@ interface CVData {
 type AppState = "initial" | "recording" | "processing" | "editing";
 
 function App() {
+  // ------ Estado general ------
   const [state, setState] = useState<AppState>("initial");
   const [isRecording, setIsRecording] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [cvData, setCvData] = useState<CVData | null>(null);
   const [recognitionSupported, setRecognitionSupported] = useState(true);
+  const [profileImage, setProfileImage] = useState<string | null>(null); // Nuevo estado
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const { toast } = useToast();
+
+  // ------ Pago / Stripe ------
+  const API_BASE =
+    (import.meta.env.VITE_API_BASE as string | undefined) ||
+    "http://localhost:4242";
+  const [uid, setUid] = useState<string>("");
+  const [isPaid, setIsPaid] = useState<boolean>(false);
+  const [isUsed, setIsUsed] = useState<boolean>(false); // Nuevo estado
+  const [canRecord, setCanRecord] = useState<boolean>(false); // Nuevo estado
+  const [checkingPayment, setCheckingPayment] = useState<boolean>(true);
+  const [buyerEmail, setBuyerEmail] = useState<string>("");
+
+  // ------ Animación typing ------
+  const fullTitle = "Tu currículum, dictado por voz";
+  const [typed, setTyped] = useState<string>("");
+  const [cursorVisible, setCursorVisible] = useState<boolean>(true);
 
   const DEFAULT_CV: CVData = {
     personalInfo: {
@@ -66,6 +88,7 @@ function App() {
       phone: "+34 000 000 000",
       address: "Ciudad, País",
       linkedin: "linkedin.com/in/tu-perfil",
+      profileImage: undefined, // Nueva propiedad
     },
     summary:
       "Profesional orientado/a a resultados, con capacidad de adaptación y aprendizaje continuo. Enfocado/a en aportar valor, comunicar con claridad y ejecutar con calidad.",
@@ -74,8 +97,7 @@ function App() {
         position: "Tu Puesto",
         company: "Nombre de la Empresa",
         duration: "Año - Año",
-        description:
-          "Responsabilidades, logros medibles e impacto en resultados.",
+        description: "Responsabilidades, logros medibles e impacto en resultados.",
       },
     ],
     education: [
@@ -88,6 +110,7 @@ function App() {
     skills: ["Comunicación", "Trabajo en Equipo", "Planificación", "Análisis"],
   };
 
+  // ---------- Setup inicial: soporte audio + pago + query success ----------
   useEffect(() => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setRecognitionSupported(false);
@@ -100,7 +123,184 @@ function App() {
     }
   }, [toast]);
 
+  useEffect(() => {
+    // UID persistente para asociar pago
+    const existing = localStorage.getItem("cvvoice_uid");
+    const newUid =
+      existing ||
+      (crypto?.randomUUID ? crypto.randomUUID() : `uid_${Date.now()}`);
+    if (!existing) localStorage.setItem("cvvoice_uid", newUid);
+    setUid(newUid);
+
+    // Captura éxito de Stripe (success=1&uid=...&session_id=...)
+    const params = new URLSearchParams(location.search);
+    const success = params.get("success");
+    const backUid = params.get("uid");
+    const sessionId = params.get("session_id");
+    
+    if (success === "1" && backUid && backUid === newUid && sessionId) {
+      // Verificar el pago directamente con Stripe
+      verifyPayment(sessionId, newUid);
+      toast({ title: "Pago completado ✅", description: "Gracias por tu compra." });
+      // Limpia query
+      history.replaceState({}, "", location.pathname);
+    } else {
+      // Comprueba estado de pago en el backend
+      (async () => {
+        await checkPaymentStatus(newUid);
+      })();
+    }
+  }, []);
+
+  const verifyPayment = async (sessionId: string, uid: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/verify-payment?session_id=${encodeURIComponent(sessionId)}&uid=${encodeURIComponent(uid)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.paid) {
+          // Verificar el estado completo después del pago
+          await checkPaymentStatus(uid);
+          
+          // Forzar actualización del estado si no se actualizó correctamente
+          setTimeout(async () => {
+            await checkPaymentStatus(uid);
+          }, 1000);
+          
+          toast({ title: "Acceso activado ✅", description: "Ya puedes comenzar a grabar tu CV." });
+        }
+      }
+    } catch (e) {
+      console.error("Error verificando pago:", e);
+    } finally {
+      setCheckingPayment(false);
+    }
+  };
+
+  // Verificar estado de pago y uso
+  const checkPaymentStatus = async (uid: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/status?uid=${encodeURIComponent(uid)}`);
+      if (res.ok) {
+        const data = await res.json();
+        console.log('Estado recibido del servidor:', data); // Debug log
+        
+        setIsPaid(data.paid);
+        setIsUsed(data.used);
+        setCanRecord(data.canRecord);
+        
+        console.log('Estados actualizados - isPaid:', data.paid, 'isUsed:', data.used, 'canRecord:', data.canRecord); // Debug log
+        
+        if (data.paid && data.used) {
+          toast({
+            title: "CV creado exitosamente",
+            description: "¡Puedes crear otro CV pagando nuevamente!",
+            variant: "default"
+          });
+        }
+      }
+    } catch (e) {
+      console.error("Error verificando estado:", e);
+    } finally {
+      setCheckingPayment(false);
+    }
+  };
+
+  const refreshPaymentStatus = async (theUid = uid) => {
+    try {
+      const res = await fetch(`${API_BASE}/api/status?uid=${encodeURIComponent(theUid)}`);
+      if (!res.ok) throw new Error("Estado no disponible");
+      const data = await res.json();
+      setIsPaid(!!data.paid);
+    } catch (e) {
+      console.error(e);
+      setIsPaid(false);
+    }
+  };
+
+  const startCheckout = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/create-checkout-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uid,
+          email: buyerEmail || undefined,
+        }),
+      });
+      if (!res.ok) throw new Error("No se pudo crear la sesión de pago");
+      const data = await res.json();
+      if (data.url) {
+        window.location.href = data.url; // Redirección segura a Stripe
+      } else {
+        throw new Error("URL de Checkout inválida");
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast({
+        title: "Error con el pago",
+        description: err?.message || "No se pudo iniciar el pago.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  // Marcar como usado después de completar la grabación
+  const markAsUsed = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/mark-used`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid })
+      });
+      
+      if (res.ok) {
+        setIsUsed(true);
+        setCanRecord(false);
+        console.log("✅ Acceso marcado como usado");
+      }
+    } catch (e) {
+      console.error("Error marcando como usado:", e);
+    }
+  };
+
+  // ---------- Animación typewriter ----------
+  useEffect(() => {
+    let i = 0;
+    const speed = 35; // ms por carácter
+    const timer = setInterval(() => {
+      setTyped(fullTitle.slice(0, i + 1));
+      i++;
+      if (i >= fullTitle.length) clearInterval(timer);
+    }, speed);
+
+    const cursorTimer = setInterval(() => {
+      setCursorVisible((v) => !v);
+    }, 500);
+
+    return () => {
+      clearInterval(timer);
+      clearInterval(cursorTimer);
+    };
+  }, []);
+
+  // ---------- Grabación ----------
   const startRecording = async () => {
+    if (!canRecord) {
+      if (!isPaid) {
+        toast({
+          title: "Pago requerido",
+          description: "Debes pagar 1 € para usar la generación de CV.",
+          variant: "destructive",
+        });
+      } else if (isUsed) {
+        toast({
+          title: "Acceso ya utilizado",
+          description: "Ya has usado tu acceso. Para crear otro CV, necesitas pagar nuevamente.",
+          variant: "destructive",
+        });
+      }
+      return;
+    }
     if (!recognitionSupported) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -124,15 +324,13 @@ function App() {
 
       toast({
         title: "Grabación iniciada",
-        description:
-          "Habla de tus datos, experiencia, formación, habilidades y logros.",
+        description: "Habla de tus datos, experiencia, formación, habilidades y logros.",
       });
     } catch (error) {
       console.error("Error accessing microphone:", error);
       toast({
         title: "Error de micrófono",
-        description:
-          "No se pudo acceder al micrófono. Verifica los permisos.",
+        description: "No se pudo acceder al micrófono. Verifica los permisos.",
         variant: "destructive",
       });
       setRecognitionSupported(false);
@@ -150,9 +348,13 @@ function App() {
         const processedCV = await processTextWithAI(transcript);
         setCvData(processedCV);
         setState("editing");
+        
+        // Marcar como usado después de generar el CV exitosamente
+        await markAsUsed();
+        
         toast({
           title: "CV generado",
-          description: "Puedes revisarlo, editarlo y descargarlo.",
+          description: "Puedes revisarlo, editarlo y descargarlo. Tu acceso ha sido utilizado.",
         });
       } else {
         toast({
@@ -169,14 +371,10 @@ function App() {
   let currentRecognition: any = null;
 
   const startVoiceRecognition = () => {
-    if (
-      !("webkitSpeechRecognition" in window) &&
-      !("SpeechRecognition" in window)
-    ) {
+    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
       toast({
         title: "Navegador no compatible",
-        description:
-          "Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.",
+        description: "Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.",
         variant: "destructive",
       });
       return;
@@ -189,16 +387,14 @@ function App() {
     ) {
       toast({
         title: "HTTPS requerido",
-        description:
-          "El reconocimiento de voz requiere HTTPS. Usa localhost o un dominio con SSL.",
+        description: "El reconocimiento de voz requiere HTTPS. Usa localhost o un dominio con SSL.",
         variant: "destructive",
       });
       return;
     }
 
     const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     currentRecognition = new SpeechRecognition();
     currentRecognition.lang = "es-ES";
     currentRecognition.continuous = true;
@@ -273,14 +469,12 @@ function App() {
   const processTextWithAI = async (text: string): Promise<CVData> => {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
     const modelName =
-      (import.meta.env.VITE_GEMINI_MODEL as string | undefined) ||
-      "gemini-2.0-flash";
+      (import.meta.env.VITE_GEMINI_MODEL as string | undefined) || "gemini-2.0-flash";
 
     if (!apiKey) {
       toast({
         title: "Falta API Key de Gemini",
-        description:
-          "Configura VITE_GEMINI_API_KEY en tu .env. Se usará extracción local básica.",
+        description: "Configura VITE_GEMINI_API_KEY en tu .env. Se usará extracción local básica.",
       });
       return processTextLocally(text);
     }
@@ -338,8 +532,7 @@ function App() {
       console.error("Gemini error:", error);
       toast({
         title: "Error con la IA",
-        description:
-          "No se pudo generar el CV con la IA. Se aplicará extracción local básica.",
+        description: "No se pudo generar el CV con la IA. Se aplicará extracción local básica.",
         variant: "destructive",
       });
       return processTextLocally(text);
@@ -366,6 +559,7 @@ function App() {
       phone: stringOr(pi.phone, d.personalInfo.phone),
       address: stringOr(pi.address, d.personalInfo.address),
       linkedin: stringOr(pi.linkedin, d.personalInfo.linkedin),
+      profileImage: profileImage || undefined, // Incluir imagen actual
     };
 
     const experience = Array.isArray(partial?.experience)
@@ -387,9 +581,7 @@ function App() {
 
     const skills =
       Array.isArray(partial?.skills) && partial.skills.length > 0
-        ? partial.skills
-            .map((s: any) => (typeof s === "string" ? s : String(s)))
-            .slice(0, 14)
+        ? partial.skills.map((s: any) => (typeof s === "string" ? s : String(s))).slice(0, 14)
         : d.skills;
 
     const summary = stringOr(partial?.summary, d.summary);
@@ -436,9 +628,8 @@ function App() {
   };
   const extractAddress = (t: string) => {
     const m =
-      t.match(
-        /(?:vivo en|resido en|dirección|direccion|ubicado en)\s+([^.;\n]+)/i
-      ) || t.match(/\b(Barcelona|Madrid|Valencia|Sevilla|Bilbao)\b/i);
+      t.match(/(?:vivo en|resido en|dirección|direccion|ubicado en)\s+([^.;\n]+)/i) ||
+      t.match(/\b(Barcelona|Madrid|Valencia|Sevilla|Bilbao)\b/i);
     return (m?.[1] || m?.[0] || "").toString();
   };
   const extractLinkedIn = (t: string) => {
@@ -446,16 +637,12 @@ function App() {
     return m?.[0] || "";
   };
   const extractSummary = (t: string) => {
-    const m = t.match(
-      /(soy|me considero|mi perfil|mi experiencia|mi objetivo)\s+([^.;]{20,})/i
-    );
+    const m = t.match(/(soy|me considero|mi perfil|mi experiencia|mi objetivo)\s+([^.;]{20,})/i);
     return m ? capitalize(m[2]) : "";
   };
   const extractExperience = (t: string): CVData["experience"] => {
     const list: CVData["experience"] = [];
-    const m = t.match(
-      /(trabaj[ée]|experiencia|puesto|cargo|como)\s+([^.;\n]+)\s+(en|para)\s+([^.;\n]+)/i
-    );
+    const m = t.match(/(trabaj[ée]|experiencia|puesto|cargo|como)\s+([^.;\n]+)\s+(en|para)\s+([^.;\n]+)/i);
     if (m) {
       list.push({
         position: capitalize(m[2]),
@@ -517,16 +704,12 @@ function App() {
     });
     return Array.from(found).slice(0, 12);
   };
-  const capitalize = (s: string) =>
-    s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+  const capitalize = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
   const updateCVData = (field: keyof CVData, value: any) => {
     if (cvData) setCvData({ ...cvData, [field]: value });
   };
-  const updatePersonalInfo = (
-    field: keyof CVData["personalInfo"],
-    value: string
-  ) => {
+  const updatePersonalInfo = (field: keyof CVData["personalInfo"], value: string) => {
     if (cvData) {
       setCvData({
         ...cvData,
@@ -546,6 +729,70 @@ function App() {
         skills: cvData.skills.filter((_, i) => i !== index),
       });
     }
+  };
+
+  // Función para manejar la carga de imagen
+  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validación de tipo de archivo
+    if (!file.type.startsWith('image/')) {
+      toast({
+        title: "Error",
+        description: "Por favor selecciona un archivo de imagen válido.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Validación de tamaño (máximo 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      toast({
+        title: "Error",
+        description: "La imagen debe ser menor a 5MB.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const base64String = e.target?.result as string;
+      setProfileImage(base64String);
+      if (cvData) {
+        setCvData({
+          ...cvData,
+          personalInfo: {
+            ...cvData.personalInfo,
+            profileImage: base64String,
+          },
+        });
+      }
+      toast({
+        title: "Imagen cargada",
+        description: "La imagen se ha añadido correctamente al CV.",
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Función para eliminar la imagen
+  const removeProfileImage = () => {
+    setProfileImage(null);
+    if (cvData) {
+      setCvData({
+        ...cvData,
+        personalInfo: {
+          ...cvData.personalInfo,
+          profileImage: undefined,
+        },
+      });
+    }
+    toast({
+      title: "Imagen eliminada",
+      description: "La imagen se ha eliminado del CV.",
+    });
   };
 
   const downloadCV = () => {
@@ -588,17 +835,25 @@ p,li{font-size:0.95rem}
 .tags{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 .tag{background:#111;color:#fff;padding:6px 12px;border-radius:999px;font-size:0.85rem}
 .meta{display:flex;gap:12px;color:#404040;font-weight:600;font-size:0.9rem}
+.header-content{display:flex;align-items:flex-start;gap:20px;margin-bottom:20px}
+.profile-image{width:100px;height:100px;border-radius:50%;object-fit:cover;border:2px solid #ddd;flex-shrink:0}
+.header-info{flex:1}
 @media print{body{padding:16px}}
 </style>
 </head>
 <body>
 <header>
-  <h1>${escapeHTML(data.personalInfo.fullName)}</h1>
-  <div class="meta">
-    <span>${escapeHTML(data.personalInfo.email)}</span>
-    <span>${escapeHTML(data.personalInfo.phone)}</span>
-    <span>${escapeHTML(data.personalInfo.address)}</span>
-    <span>${escapeHTML(data.personalInfo.linkedin)}</span>
+  <div class="header-content">
+    ${data.personalInfo.profileImage ? `<img src="${data.personalInfo.profileImage}" alt="Imagen de perfil" class="profile-image" />` : ''}
+    <div class="header-info">
+      <h1>${escapeHTML(data.personalInfo.fullName)}</h1>
+      <div class="meta">
+        <span>${escapeHTML(data.personalInfo.email)}</span>
+        <span>${escapeHTML(data.personalInfo.phone)}</span>
+        <span>${escapeHTML(data.personalInfo.address)}</span>
+        <span>${escapeHTML(data.personalInfo.linkedin)}</span>
+      </div>
+    </div>
   </div>
 </header>
 
@@ -664,6 +919,7 @@ p,li{font-size:0.95rem}
     if (mediaRecorderRef.current) mediaRecorderRef.current = null;
   };
 
+  // ------------------- UI -------------------
   return (
     <div className="min-h-screen bg-white text-black w-full">
       {/* HERO full-bleed */}
@@ -674,9 +930,35 @@ p,li{font-size:0.95rem}
             <img src={Logo} alt="CV Voice" className="h-12 md:h-14 select-none" draggable={false} />
           </div>
 
+          {/* Typewriter title */}
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight text-center mb-4">
-            Tu currículum, dictado por voz
+            <span>{typed}</span>
+            <span
+              aria-hidden="true"
+              className="inline-block translate-y-[-2px] ml-1 w-[2px] h-[1.2em] bg-black align-middle"
+              style={{ opacity: cursorVisible ? 1 : 0 }}
+            />
           </h1>
+
+          {/* Paywall badge / status */}
+          <div className="flex items-center justify-center mb-4">
+            {checkingPayment ? (
+              <span className="text-sm text-gray-500">Comprobando acceso…</span>
+            ) : isPaid && !isUsed ? (
+              <span className="text-sm px-3 py-1 rounded-full bg-green-100 text-green-800">
+                Acceso activado
+              </span>
+            ) : isPaid && isUsed ? (
+              <span className="text-sm px-3 py-1 rounded-full bg-red-100 text-red-800">
+                Acceso utilizado
+              </span>
+            ) : (
+              <span className="text-sm px-3 py-1 rounded-full bg-yellow-100 text-yellow-800">
+                Acceso bloqueado · Pago único 1 €
+              </span>
+            )}
+          </div>
+
           <p className="text-lg md:text-xl text-gray-600 text-center max-w-4xl mx-auto">
             Habla con naturalidad sobre tu experiencia, formación, habilidades y logros.
             Nuestra IA organiza la información y genera un CV profesional listo para{" "}
@@ -684,16 +966,76 @@ p,li{font-size:0.95rem}
             <span className="font-semibold">cualquier sector</span>.
           </p>
 
+          {/* CTA zona */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mt-8">
+            {/* Sección de pago y grabación */}
+            {!isPaid && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <Lock className="h-5 w-5 text-yellow-600" />
+                  <span className="text-yellow-800 font-medium">
+                    Pago único de 1 € para generar tu CV profesional
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  <Input
+                    type="email"
+                    placeholder="Tu email (opcional para recibo)"
+                    className="border-none focus-visible:ring-0 px-0"
+                    value={buyerEmail}
+                    onChange={(e) => setBuyerEmail(e.target.value)}
+                  />
+                </div>
+                <Button
+                  onClick={startCheckout}
+                  size="lg"
+                  className="bg-black text-white hover:bg-gray-800 rounded-full px-8 py-6"
+                >
+                  <CreditCard className="mr-2 h-5 w-5" />
+                  Pagar acceso · 1 €
+                </Button>
+              </div>
+            )}
+
+            {/* Mostrar opción de volver a pagar si ya se usó el acceso */}
+            {isPaid && isUsed && (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <Info className="h-5 w-5 text-blue-600" />
+                  <span className="text-blue-800 font-medium">
+                    Ya has creado un CV. ¿Quieres crear otro?
+                  </span>
+                </div>
+                <div className="space-y-3">
+                  <Input
+                    type="email"
+                    placeholder="Tu email (opcional para recibo)"
+                    className="border-none focus-visible:ring-0 px-0"
+                    value={buyerEmail}
+                    onChange={(e) => setBuyerEmail(e.target.value)}
+                  />
+                </div>
+                <Button
+                  onClick={startCheckout}
+                  size="lg"
+                  className="bg-black text-white hover:bg-gray-800 rounded-full px-8 py-6"
+                >
+                  <CreditCard className="mr-2 h-5 w-5" />
+                  Crear otro CV · 1 €
+                </Button>
+              </div>
+            )}
+
+            {/* Grabación */}
             {state !== "recording" ? (
               <Button
                 onClick={startRecording}
-                disabled={!recognitionSupported}
+                disabled={!recognitionSupported || !canRecord}
                 size="lg"
-                className="bg-black text-white hover:bg-gray-800 rounded-full px-8 py-6"
+                className="bg-black text-white hover:bg-gray-800 rounded-full px-8 py-6 disabled:opacity-50"
               >
                 <Mic className="mr-2 h-5 w-5" />
-                Comenzar grabación
+                {!isPaid ? "Pagar para grabar" : isUsed ? "Paga para crear otro CV" : "Comenzar grabación"}
               </Button>
             ) : (
               <Button
@@ -707,9 +1049,7 @@ p,li{font-size:0.95rem}
             )}
 
             <Button
-              onClick={() =>
-                window.scrollTo({ top: innerHeight * 1.1, behavior: "smooth" })
-              }
+              onClick={() => window.scrollTo({ top: innerHeight * 1.1, behavior: "smooth" })}
               variant="outline"
               className="rounded-full px-8 py-6 border-black text-black hover:bg-gray-100"
             >
@@ -718,13 +1058,12 @@ p,li{font-size:0.95rem}
             </Button>
           </div>
 
+          {/* Transcripción en vivo */}
           {state === "recording" && (
             <div className="mt-10">
               <Card className="border-2 border-gray-200">
                 <CardHeader className="pb-4">
-                  <CardTitle className="text-lg font-semibold">
-                    Transcripción en tiempo real
-                  </CardTitle>
+                  <CardTitle className="text-lg font-semibold">Transcripción en tiempo real</CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="bg-gray-50 rounded-lg p-5 min-h-[120px]">
@@ -752,9 +1091,9 @@ p,li{font-size:0.95rem}
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-gray-600">
-                Presiona <em>Comenzar grabación</em> y cuenta quién eres, tu
-                experiencia (puestos, tareas, logros), formación (títulos,
-                centros, años), habilidades (técnicas y blandas) e idiomas.
+                Presiona <em>Comenzar grabación</em> y cuenta quién eres, tu experiencia (puestos,
+                tareas, logros), formación (títulos, centros, años), habilidades (técnicas y
+                blandas) e idiomas.
               </CardContent>
             </Card>
 
@@ -766,9 +1105,9 @@ p,li{font-size:0.95rem}
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-gray-600">
-                La IA entiende tu relato y lo transforma en un CV estructurado
-                (Resumen, Experiencia, Educación y Habilidades) con lenguaje
-                profesional válido para cualquier sector.
+                La IA entiende tu relato y lo transforma en un CV estructurado (Resumen,
+                Experiencia, Educación y Habilidades) con lenguaje profesional válido para
+                cualquier sector.
               </CardContent>
             </Card>
 
@@ -780,9 +1119,8 @@ p,li{font-size:0.95rem}
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-gray-600">
-                Revisa, ajusta lo necesario y descárgalo en HTML listo para
-                imprimir o convertir a PDF. Puedes crear un CV nuevo cuando
-                quieras.
+                Revisa, ajusta lo necesario y descárgalo en HTML listo para imprimir o convertir a
+                PDF. Puedes crear un CV nuevo cuando quieras.
               </CardContent>
             </Card>
           </div>
@@ -795,13 +1133,10 @@ p,li{font-size:0.95rem}
           <div className="w-full max-w-[1100px] mx-auto px-6 pb-6">
             <Card className="border-2 border-blue-200">
               <CardHeader className="pb-2">
-                <CardTitle className="text-2xl font-semibold">
-                  Generando tu CV…
-                </CardTitle>
+                <CardTitle className="text-2xl font-semibold">Generando tu CV…</CardTitle>
               </CardHeader>
               <CardContent className="text-gray-600">
-                Analizando tu información y organizándola en un formato claro y
-                profesional.
+                Analizando tu información y organizándola en un formato claro y profesional.
               </CardContent>
             </Card>
           </div>
@@ -818,10 +1153,7 @@ p,li{font-size:0.95rem}
                 <h2 className="text-2xl font-bold">Editar curriculum</h2>
               </div>
               <div className="flex gap-3">
-                <Button
-                  onClick={downloadCV}
-                  className="bg-black text-white hover:bg-gray-800 px-6"
-                >
+                <Button onClick={downloadCV} className="bg-black text-white hover:bg-gray-800 px-6">
                   <Download className="mr-2 h-4 w-4" />
                   Descargar
                 </Button>
@@ -847,15 +1179,59 @@ p,li{font-size:0.95rem}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Sección de imagen de perfil */}
+                    <div>
+                      <Label htmlFor="profileImage">Imagen de perfil (opcional)</Label>
+                      <div className="mt-2 space-y-3">
+                        {(cvData.personalInfo.profileImage || profileImage) ? (
+                          <div className="flex items-center gap-4">
+                            <img
+                              src={cvData.personalInfo.profileImage || profileImage || ""}
+                              alt="Imagen de perfil"
+                              className="w-20 h-20 rounded-full object-cover border-2 border-gray-200"
+                            />
+                            <div className="space-y-2">
+                              <p className="text-sm text-gray-600">Imagen cargada correctamente</p>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={removeProfileImage}
+                                className="text-red-600 hover:text-red-700"
+                              >
+                                Eliminar imagen
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-4">
+                            <div className="w-20 h-20 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center">
+                              <User className="h-8 w-8 text-gray-400" />
+                            </div>
+                            <div className="space-y-2">
+                              <Input
+                                id="profileImage"
+                                type="file"
+                                accept="image/*"
+                                onChange={handleImageUpload}
+                                className="w-full"
+                              />
+                              <p className="text-xs text-gray-500">
+                                Formatos: JPG, PNG, GIF. Máximo 5MB.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
                     <div className="grid grid-cols-1 gap-4">
                       <div>
                         <Label htmlFor="fullName">Nombre completo</Label>
                         <Input
                           id="fullName"
                           value={cvData.personalInfo.fullName}
-                          onChange={(e) =>
-                            updatePersonalInfo("fullName", e.target.value)
-                          }
+                          onChange={(e) => updatePersonalInfo("fullName", e.target.value)}
                           className="mt-1"
                         />
                       </div>
@@ -865,9 +1241,7 @@ p,li{font-size:0.95rem}
                           id="email"
                           type="email"
                           value={cvData.personalInfo.email}
-                          onChange={(e) =>
-                            updatePersonalInfo("email", e.target.value)
-                          }
+                          onChange={(e) => updatePersonalInfo("email", e.target.value)}
                           className="mt-1"
                         />
                       </div>
@@ -876,9 +1250,7 @@ p,li{font-size:0.95rem}
                         <Input
                           id="phone"
                           value={cvData.personalInfo.phone}
-                          onChange={(e) =>
-                            updatePersonalInfo("phone", e.target.value)
-                          }
+                          onChange={(e) => updatePersonalInfo("phone", e.target.value)}
                           className="mt-1"
                         />
                       </div>
@@ -887,9 +1259,7 @@ p,li{font-size:0.95rem}
                         <Input
                           id="address"
                           value={cvData.personalInfo.address}
-                          onChange={(e) =>
-                            updatePersonalInfo("address", e.target.value)
-                          }
+                          onChange={(e) => updatePersonalInfo("address", e.target.value)}
                           className="mt-1"
                         />
                       </div>
@@ -898,9 +1268,7 @@ p,li{font-size:0.95rem}
                         <Input
                           id="linkedin"
                           value={cvData.personalInfo.linkedin}
-                          onChange={(e) =>
-                            updatePersonalInfo("linkedin", e.target.value)
-                          }
+                          onChange={(e) => updatePersonalInfo("linkedin", e.target.value)}
                           className="mt-1"
                         />
                       </div>
@@ -926,7 +1294,7 @@ p,li{font-size:0.95rem}
                   <CardHeader>
                     <CardTitle className="text-xl">Habilidades</CardTitle>
                   </CardHeader>
-                  <CardContent className="space-y-4">
+                <CardContent className="space-y-4">
                     <div className="flex flex-wrap gap-2">
                       {cvData.skills.map((skill, index) => (
                         <span
@@ -963,36 +1331,45 @@ p,li{font-size:0.95rem}
                     <CardTitle className="text-xl">Vista previa</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="bg-white border border-gray-200 p-6 rounded-lg shadow-sm text-sm">
-                      <div className="mb-6">
-                        <h1 className="text-2xl font-bold text-black mb-2">
-                          {cvData.personalInfo.fullName}
-                        </h1>
-                        <div className="bg-gray-50 p-4 rounded space-y-1 text-gray-700">
-                          <p>
-                            <strong>Email:</strong> {cvData.personalInfo.email}
-                          </p>
-                          <p>
-                            <strong>Teléfono:</strong> {cvData.personalInfo.phone}
-                          </p>
-                          <p>
-                            <strong>Dirección:</strong>{" "}
-                            {cvData.personalInfo.address}
-                          </p>
-                          <p>
-                            <strong>LinkedIn:</strong>{" "}
-                            {cvData.personalInfo.linkedin}
-                          </p>
+                    <div className="bg-white p-8 rounded-lg shadow-lg max-h-[800px] overflow-y-auto">
+                      <div className="space-y-6">
+                        <div className="border-b border-gray-200 pb-4">
+                          <div className="flex items-start gap-4">
+                            {/* Imagen de perfil en la vista previa */}
+                            {(cvData.personalInfo.profileImage || profileImage) && (
+                              <img
+                                src={cvData.personalInfo.profileImage || profileImage || ""}
+                                alt="Imagen de perfil"
+                                className="w-24 h-24 rounded-full object-cover border-2 border-gray-200 flex-shrink-0"
+                              />
+                            )}
+                            <div className="flex-1">
+                              <h1 className="text-2xl font-bold text-black mb-2">
+                                {cvData.personalInfo.fullName}
+                              </h1>
+                              <div className="space-y-1 text-gray-600 text-sm">
+                                <p>
+                                  <strong>Email:</strong> {cvData.personalInfo.email}
+                                </p>
+                                <p>
+                                  <strong>Teléfono:</strong> {cvData.personalInfo.phone}
+                                </p>
+                                <p>
+                                  <strong>Dirección:</strong> {cvData.personalInfo.address}
+                                </p>
+                                <p>
+                                  <strong>LinkedIn:</strong> {cvData.personalInfo.linkedin}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                      </div>
 
                       <div className="mb-6">
                         <h2 className="text-lg font-semibold text-black mb-2 border-b border-black pb-1">
                           Resumen
                         </h2>
-                        <p className="text-gray-700 italic leading-relaxed">
-                          {cvData.summary}
-                        </p>
+                        <p className="text-gray-700 italic leading-relaxed">{cvData.summary}</p>
                       </div>
 
                       <div className="mb-6">
@@ -1004,9 +1381,7 @@ p,li{font-size:0.95rem}
                             <h3 className="font-medium text-black">
                               {exp.position} — {exp.company}
                             </h3>
-                            <p className="text-gray-600 text-xs font-medium">
-                              {exp.duration}
-                            </p>
+                            <p className="text-gray-600 text-xs font-medium">{exp.duration}</p>
                             <p className="text-gray-700 mt-1">{exp.description}</p>
                           </div>
                         ))}
@@ -1018,9 +1393,7 @@ p,li{font-size:0.95rem}
                         </h2>
                         {cvData.education.map((edu, index) => (
                           <div key={index} className="mb-3 last:mb-0">
-                            <h3 className="font-medium text-black">
-                              {edu.degree}
-                            </h3>
+                            <h3 className="font-medium text-black">{edu.degree}</h3>
                             <p className="text-gray-700">
                               {edu.institution} — {edu.year}
                             </p>
@@ -1034,14 +1407,12 @@ p,li{font-size:0.95rem}
                         </h2>
                         <div className="flex flex-wrap gap-1">
                           {cvData.skills.map((skill, index) => (
-                            <span
-                              key={index}
-                              className="bg-black text-white px-2 py-1 rounded text-xs"
-                            >
+                            <span key={index} className="bg-black text-white px-2 py-1 rounded text-xs">
                               {skill}
                             </span>
                           ))}
                         </div>
+                      </div>
                       </div>
                     </div>
                   </CardContent>
@@ -1064,9 +1435,9 @@ p,li{font-size:0.95rem}
                 </CardTitle>
               </CardHeader>
               <CardContent className="text-gray-600">
-                Puedes usar la app sin almacenar tu audio en servidores propios:
-                la transcripción ocurre en tu navegador. El CV generado se queda en
-                tu sesión y puedes eliminarlo cuando quieras con “Nuevo CV”.
+                Puedes usar la app sin almacenar tu audio en servidores propios: la transcripción
+                ocurre en tu navegador. El CV generado se queda en tu sesión y puedes eliminarlo
+                cuando quieras con “Nuevo CV”.
               </CardContent>
             </Card>
 
