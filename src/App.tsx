@@ -66,9 +66,9 @@ function App() {
   const { toast } = useToast();
 
   // ------ Pago / Stripe ------
-  const API_BASE =
-    (import.meta.env.VITE_API_BASE as string | undefined) ||
-    "http://localhost:4242";
+  const API_BASE = process.env.NODE_ENV === 'production' 
+    ? '/api' 
+    : 'http://localhost:4242';
   const [uid, setUid] = useState<string>("");
   const [isPaid, setIsPaid] = useState<boolean>(false);
   const [isUsed, setIsUsed] = useState<boolean>(false); // Nuevo estado
@@ -154,7 +154,7 @@ function App() {
 
   const verifyPayment = async (sessionId: string, uid: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/verify-payment?session_id=${encodeURIComponent(sessionId)}&uid=${encodeURIComponent(uid)}`);
+      const res = await fetch(`${API_BASE}/verify-payment?session_id=${encodeURIComponent(sessionId)}&uid=${encodeURIComponent(uid)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.paid) {
@@ -179,7 +179,7 @@ function App() {
   // Verificar estado de pago y uso
   const checkPaymentStatus = async (uid: string) => {
     try {
-      const res = await fetch(`${API_BASE}/api/status?uid=${encodeURIComponent(uid)}`);
+      const res = await fetch(`${API_BASE}/status?uid=${encodeURIComponent(uid)}`);
       if (res.ok) {
         const data = await res.json();
         console.log('Estado recibido del servidor:', data); // Debug log
@@ -209,7 +209,7 @@ function App() {
 
   const startCheckout = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/create-checkout-session`, {
+      const res = await fetch(`${API_BASE}/create-checkout-session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -237,7 +237,7 @@ function App() {
   // Marcar como usado después de completar la grabación
   const markAsUsed = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/mark-used`, {
+      const res = await fetch(`${API_BASE}/mark-used`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ uid })
