@@ -66,8 +66,8 @@ function App() {
   const { toast } = useToast();
 
   // ------ Pago / Stripe ------
-  const API_BASE = process.env.NODE_ENV === 'production' 
-    ? 'https://voice-cv.com/api' 
+  const API_BASE = import.meta.env.PROD 
+    ? 'https://www.voice-cv.com/api' 
     : 'http://localhost:4242';
   const [uid, setUid] = useState<string>("");
   const [isPaid, setIsPaid] = useState<boolean>(false);
