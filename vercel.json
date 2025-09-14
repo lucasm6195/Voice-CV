@@ -25,7 +25,7 @@
   ],
   "env": {
     "STRIPE_SECRET_KEY": "mk_1S5uh6BmzRIk98HjvGpZUbDy",
-    "CLIENT_URL": "https://voice-cv.com",
+    "CLIENT_URL": "https://www.voice-cv.com",
     "STRIPE_WEBHOOK_SECRET": "whsec_0cc3qPdCOd9bKyTTVRSzurMq5Qk30TeL"
   }
 }
