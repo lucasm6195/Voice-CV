@@ -30,10 +30,5 @@
       "src": "/(.*)",
       "dest": "/index.html"
     }
-  ],
-  "env": {
-    "STRIPE_SECRET_KEY": "mk_1S5uh6BmzRIk98HjvGpZUbDy",
-    "CLIENT_URL": "https://www.voice-cv.com",
-    "STRIPE_WEBHOOK_SECRET": "whsec_e3493d79a1a16e2f0c9d46dd79af2e431909b7b4bb7f8b15b11acdf717576e11"
-  }
+  ]
 }

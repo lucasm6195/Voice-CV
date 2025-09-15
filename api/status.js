@@ -13,7 +13,7 @@ function loadStore() {
   }
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   // Configurar CORS para ambos dominios
   const allowedOrigins = [
     'https://voice-cv.com',
@@ -56,4 +56,4 @@ export default async function handler(req, res) {
     paid: record.paid || false, 
     used: record.used || false 
   });
-}
+};

@@ -4,7 +4,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
   apiVersion: '2024-06-20',
 });
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   // Configurar CORS para ambos dominios
   const allowedOrigins = [
     'https://voice-cv.com',
@@ -66,4 +66,4 @@ export default async function handler(req, res) {
     console.error('❌ Error creando Checkout Session:', err);
     res.status(500).json({ error: 'No se pudo crear la sesión de pago' });
   }
-}
+};
