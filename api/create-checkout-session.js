@@ -32,6 +32,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Verificar que Stripe esté configurado correctamente
+    if (!process.env.STRIPE_SECRET_KEY) {
+      console.error('❌ STRIPE_SECRET_KEY no está configurada');
+      return res.status(500).json({ error: 'Configuración del servidor incompleta' });
+    }
+
     const { uid, email } = req.body || {};
     if (!uid) {
       return res.status(400).json({ error: 'uid requerido' });
